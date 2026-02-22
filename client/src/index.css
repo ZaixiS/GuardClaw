@@ -4,11 +4,11 @@
 
 :root {
   /* Light mode colors */
-  --gc-bg: #f3f4f6;
-  --gc-card: #ffffff;
-  --gc-border: #e5e7eb;
-  --gc-text: #111827;
-  --gc-text-secondary: #6b7280;
+  --gc-bg: #e8ecf8;
+  --gc-card: rgba(255, 255, 255, 0.55);
+  --gc-border: rgba(255, 255, 255, 0.70);
+  --gc-text: #1a1d2e;
+  --gc-text-secondary: #5a6080;
   --gc-primary: #3b82f6;
   --gc-safe: #10b981;
   --gc-warning: #f59e0b;
@@ -17,36 +17,195 @@
 
 .dark {
   /* Dark mode colors */
-  --gc-bg: #0a0e1a;
-  --gc-card: #1a1f2e;
-  --gc-border: #2d3548;
+  --gc-bg: #090c1a;
+  --gc-card: rgba(22, 26, 44, 0.75);
+  --gc-border: rgba(255, 255, 255, 0.09);
   --gc-text: #e2e8f0;
-  --gc-text-secondary: #94a3b8;
+  --gc-text-secondary: #7a8aaa;
   --gc-primary: #6366f1;
   --gc-safe: #10b981;
   --gc-warning: #f59e0b;
   --gc-danger: #ef4444;
 }
 
+/* ─── macOS-style wallpaper backgrounds ─── */
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI',
+    'Roboto', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: var(--gc-bg);
+  min-height: 100vh;
+  /* Light mode: soft macOS Big Sur-esque gradient */
+  background:
+    radial-gradient(ellipse at 15% 60%, rgba(120, 119, 198, 0.18) 0%, transparent 55%),
+    radial-gradient(ellipse at 85% 15%, rgba(80, 150, 220, 0.15) 0%, transparent 55%),
+    radial-gradient(ellipse at 60% 90%, rgba(200, 130, 210, 0.12) 0%, transparent 50%),
+    linear-gradient(160deg, #dde4f5 0%, #e8f2ff 35%, #f3e8ff 65%, #e4eeff 100%);
+  background-attachment: fixed;
   color: var(--gc-text);
 }
 
+.dark body {
+  /* Dark mode: deep cosmic macOS Monterey/Ventura-style gradient */
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(72, 40, 110, 0.35) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 20%, rgba(17, 55, 120, 0.28) 0%, transparent 60%),
+    radial-gradient(ellipse at 50% 90%, rgba(20, 60, 100, 0.20) 0%, transparent 55%),
+    linear-gradient(160deg, #07090f 0%, #0c0e1c 35%, #0a0818 65%, #050810 100%);
+  background-attachment: fixed;
+}
+
 code {
-  font-family: 'Courier New', Courier, monospace;
+  font-family: 'SF Mono', 'Fira Code', 'Courier New', Courier, monospace;
 }
 
 * {
   box-sizing: border-box;
 }
 
+/* ─── Glass Panel ─── */
+.glass-panel {
+  border-radius: 18px;
+  transition: box-shadow 0.3s ease;
+}
+
+.dark-glass {
+  background: rgba(13, 16, 30, 0.82);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow:
+    0 40px 80px rgba(0, 0, 0, 0.55),
+    0 12px 30px rgba(0, 0, 0, 0.35),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.07);
+}
+
+.light-glass {
+  background: rgba(242, 246, 255, 0.72);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.80);
+  box-shadow:
+    0 20px 50px rgba(80, 90, 160, 0.14),
+    0 6px 16px rgba(80, 90, 160, 0.08),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.85);
+}
+
+/* ─── Glass inner elements ─── */
+.glass-divider-dark {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 0 16px;
+}
+
+.glass-divider-light {
+  height: 1px;
+  background: rgba(0, 0, 0, 0.07);
+  margin: 0 16px;
+}
+
+/* ─── Pill button ─── */
+.glass-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 7px;
+  border-radius: 9px;
+  font-size: 1.1rem;
+  line-height: 1;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+}
+
+.dark .glass-btn:hover {
+  background: rgba(255, 255, 255, 0.10);
+}
+
+.glass-btn:hover {
+  background: rgba(0, 0, 0, 0.07);
+}
+
+.glass-btn:active {
+  transform: scale(0.92);
+}
+
+/* ─── Stat mini card ─── */
+.stat-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 4px;
+  border-radius: 12px;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.stat-cell.clickable {
+  cursor: pointer;
+}
+
+.stat-cell.clickable:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.dark .stat-cell.clickable:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.stat-cell.clickable:not(.dark):hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.stat-cell.active {
+  background: rgba(99, 102, 241, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.35);
+}
+
+/* ─── Connection glow dot ─── */
+.dot-connected {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 7px #34d399, 0 0 14px rgba(52, 211, 153, 0.4);
+  flex-shrink: 0;
+}
+
+.dot-disconnected {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f87171;
+  box-shadow: 0 0 7px #f87171, 0 0 14px rgba(248, 113, 113, 0.4);
+  flex-shrink: 0;
+}
+
+/* ─── Scrollbar (for event list inside glass panel) ─── */
+.glass-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.glass-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dark .glass-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+}
+
+.glass-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 3px;
+}
+
+.glass-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* ─── Legacy scrollbar (for modals etc.) ─── */
 ::-webkit-scrollbar {
   width: 8px;
 }
@@ -62,4 +221,28 @@ code {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--gc-text-secondary);
+}
+
+/* ─── Expand/collapse animation ─── */
+.panel-content-enter {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.panel-content-open {
+  overflow: hidden;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.25s ease;
+}
+
+/* ─── Chevron rotation ─── */
+.chevron {
+  display: inline-block;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  font-style: normal;
+}
+
+.chevron.open {
+  transform: rotate(180deg);
 }
