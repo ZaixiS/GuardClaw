@@ -1,0 +1,51 @@
+appId: com.guardclaw.app
+productName: GuardClaw
+copyright: Copyright © 2024 GuardClaw
+
+directories:
+  output: dist_electron
+  buildResources: assets
+
+files:
+  - electron/**/*
+  - server/**/*
+  - client/dist/**/*
+  - package.json
+  - node_modules/**/*
+  - "!node_modules/.cache/**/*"
+  - "!client/src/**/*"
+  - "!client/*.config.*"
+  - "!dist_electron/**/*"
+  - "!**/*.map"
+  - "!.git/**/*"
+
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch:
+        - universal
+    - target: zip
+      arch:
+        - universal
+  icon: assets/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: assets/entitlements.mac.plist
+  entitlementsInherit: assets/entitlements.mac.plist
+
+dmg:
+  title: GuardClaw
+  window:
+    width: 540
+    height: 380
+  contents:
+    - x: 150
+      y: 185
+      type: file
+    - x: 390
+      y: 185
+      type: link
+      path: /Applications
+
+asar: true

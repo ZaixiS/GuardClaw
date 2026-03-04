@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import EventList from './components/EventList';
 import ConnectionModal from './components/ConnectionModal';
 import SettingsModal from './components/SettingsModal';
@@ -32,6 +32,14 @@ function App() {
     return saved !== null ? saved === 'true' : true;
   });
 
+  // Refs for closures — fixes stale closure bugs in interval and SSE handler
+  const eventFilterRef = useRef(null);
+  const backendFilterRef = useRef('all');
+
+  // Keep refs in sync with state
+  useEffect(() => { eventFilterRef.current = eventFilter; }, [eventFilter]);
+  useEffect(() => { backendFilterRef.current = backendFilter; }, [backendFilter]);
+
   useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
@@ -40,6 +48,50 @@ function App() {
     }
     localStorage.setItem('darkMode', darkMode);
   }, [darkMode]);
+
+  const updateStats = useCallback((eventList) => {
+    const s = eventList.reduce(
+      (acc, event) => {
+        acc.totalEvents++;
+        if (event.safeguard?.riskScore <= 3) {
+          acc.safeCommands++;
+        } else if (event.safeguard?.riskScore <= 7) {
+          acc.warnings++;
+        } else if (event.safeguard?.riskScore > 7) {
+          acc.blocked++;
+        }
+        return acc;
+      },
+      { totalEvents: 0, safeCommands: 0, warnings: 0, blocked: 0 }
+    );
+    setStats(s);
+  }, []);
+
+  // Stable fetch function — always reads current filter values from refs
+  const fetchAndUpdateEvents = useCallback(async () => {
+    const filter = eventFilterRef.current;
+    const backend = backendFilterRef.current;
+    try {
+      const filterParam = filter ? `&filter=${filter}` : '';
+      const backendParam = backend !== 'all' ? `&backend=${backend}` : '';
+      const response = await fetch(`/api/events/history?limit=2000${filterParam}${backendParam}`);
+      if (response.ok) {
+        const data = await response.json();
+        const filteredEvents = backend === 'all'
+          ? data.events || []
+          : (data.events || []).filter(e => {
+              const sessionKey = e.sessionKey || e.payload?.sessionKey || '';
+              if (backend === 'openclaw') return sessionKey.includes('agent:');
+              if (backend === 'nanobot') return sessionKey.includes('nanobot');
+              return true;
+            });
+        setEvents(filteredEvents);
+        updateStats(filteredEvents);
+      }
+    } catch (error) {
+      console.error('Failed to fetch events:', error);
+    }
+  }, [updateStats]);
 
   useEffect(() => {
     const connectToBackend = async () => {
@@ -54,7 +106,6 @@ function App() {
           setDaysSinceInstall(data.install?.daysSinceInstall || 0);
           setLlmConfig(data.llmConfig || null);
           setBlockingStatus(data.blocking || null);
-          fetchEvents();
         }
       } catch (error) {
         console.error('Failed to connect:', error);
@@ -63,62 +114,37 @@ function App() {
       }
     };
 
-    const fetchEvents = async (filter = null, backend = 'all') => {
-      try {
-        const filterParam = filter ? `&filter=${filter}` : '';
-        const backendParam = backend !== 'all' ? `&backend=${backend}` : '';
-        const response = await fetch(`/api/events/history?limit=2000${filterParam}${backendParam}`);
-        if (response.ok) {
-          const data = await response.json();
-          const filteredEvents = backend === 'all'
-            ? data.events || []
-            : (data.events || []).filter(e => {
-                const sessionKey = e.sessionKey || e.payload?.sessionKey || '';
-                if (backend === 'openclaw') return sessionKey.includes('agent:');
-                if (backend === 'nanobot') return sessionKey.includes('nanobot');
-                return true;
-              });
-          setEvents(filteredEvents);
-          if (!filter) {
-            updateStats(filteredEvents);
-          }
-        }
-      } catch (error) {
-        console.error('Failed to fetch events:', error);
-      }
-    };
-
-    const updateStats = (eventList) => {
-      const s = eventList.reduce(
-        (acc, event) => {
-          acc.totalEvents++;
-          if (event.safeguard?.riskScore <= 3) {
-            acc.safeCommands++;
-          } else if (event.safeguard?.riskScore <= 7) {
-            acc.warnings++;
-          } else if (event.safeguard?.riskScore > 7) {
-            acc.blocked++;
-          }
-          return acc;
-        },
-        { totalEvents: 0, safeCommands: 0, warnings: 0, blocked: 0 }
-      );
-      setStats(s);
-    };
-
     connectToBackend();
 
     const eventSource = new EventSource('/api/events');
     eventSource.onmessage = (e) => {
       try {
         const newEvent = JSON.parse(e.data);
-        setEvents((prev) => [newEvent, ...prev].slice(0, 100));
-        setStats((prev) => ({
-          totalEvents: prev.totalEvents + 1,
-          safeCommands: newEvent.safeguard?.riskScore <= 3 ? prev.safeCommands + 1 : prev.safeCommands,
-          warnings: newEvent.safeguard?.riskScore > 3 && newEvent.safeguard?.riskScore <= 7 ? prev.warnings + 1 : prev.warnings,
-          blocked: newEvent.safeguard?.riskScore > 7 ? prev.blocked + 1 : prev.blocked,
-        }));
+        const activeFilter = eventFilterRef.current;
+        const activeBackend = backendFilterRef.current;
+
+        // Check backend filter
+        const sessionKey = newEvent.sessionKey || newEvent.payload?.sessionKey || '';
+        const matchesBackend = activeBackend === 'all'
+          || (activeBackend === 'openclaw' && sessionKey.includes('agent:'))
+          || (activeBackend === 'nanobot' && sessionKey.includes('nanobot'));
+
+        // Check event type filter
+        const score = newEvent.safeguard?.riskScore ?? 0;
+        const matchesFilter = !activeFilter
+          || (activeFilter === 'safe' && score <= 3)
+          || (activeFilter === 'warning' && score > 3 && score <= 7)
+          || (activeFilter === 'blocked' && score > 7);
+
+        if (matchesBackend && matchesFilter) {
+          setEvents((prev) => [newEvent, ...prev].slice(0, 100));
+          setStats((prev) => ({
+            totalEvents: prev.totalEvents + 1,
+            safeCommands: score <= 3 ? prev.safeCommands + 1 : prev.safeCommands,
+            warnings: score > 3 && score <= 7 ? prev.warnings + 1 : prev.warnings,
+            blocked: score > 7 ? prev.blocked + 1 : prev.blocked,
+          }));
+        }
       } catch (error) {
         console.error('Failed to parse event:', error);
       }
@@ -130,39 +156,19 @@ function App() {
       setTimeout(connectToBackend, 5000);
     };
 
-    const refreshInterval = setInterval(() => {
-      fetchEvents();
-    }, 10000);
+    // Interval always uses the stable ref-based fetcher — no stale closure
+    const refreshInterval = setInterval(fetchAndUpdateEvents, 10000);
 
     return () => {
       eventSource.close();
       clearInterval(refreshInterval);
     };
-  }, []);
+  }, [fetchAndUpdateEvents]);
 
+  // Re-fetch when filters change
   useEffect(() => {
-    const refetchEvents = async () => {
-      try {
-        const filterParam = eventFilter ? `&filter=${eventFilter}` : '';
-        const response = await fetch(`/api/events/history?limit=2000${filterParam}`);
-        if (response.ok) {
-          const data = await response.json();
-          const filteredEvents = backendFilter === 'all'
-            ? data.events || []
-            : (data.events || []).filter(e => {
-                const sessionKey = e.sessionKey || e.payload?.sessionKey || '';
-                if (backendFilter === 'openclaw') return sessionKey.includes('agent:');
-                if (backendFilter === 'nanobot') return sessionKey.includes('nanobot');
-                return true;
-              });
-          setEvents(filteredEvents);
-        }
-      } catch (error) {
-        console.error('Failed to fetch filtered events:', error);
-      }
-    };
-    refetchEvents();
-  }, [eventFilter, backendFilter]);
+    fetchAndUpdateEvents();
+  }, [eventFilter, backendFilter, fetchAndUpdateEvents]);
 
   const getGatewayDetails = () => {
     if (!connectionStats) return [];
@@ -205,30 +211,9 @@ function App() {
     }, 2000);
   };
 
-  // ─── derived helpers ───────────────────────────────────────────────────────
-  const isDark = darkMode;
-  const textPrimary   = isDark ? 'text-white/90'  : 'text-gray-800/90';
-  const textSecondary = isDark ? 'text-white/45'  : 'text-gray-500';
-  const textTertiary  = isDark ? 'text-white/28'  : 'text-gray-400';
-  const divider       = isDark ? 'glass-divider-dark' : 'glass-divider-light';
-
-  const backendButtons = [
-    { key: 'all', label: 'All', dot: null },
-    ...(backends?.openclaw ? [{ key: 'openclaw', label: 'OpenClaw', dot: backends.openclaw.connected }] : []),
-    ...(backends?.nanobot  ? [{ key: 'nanobot',  label: 'Nanobot',  dot: backends.nanobot.connected  }] : []),
-  ];
-
-  const statRows = [
-    { label: 'DAYS',  value: daysSinceInstall, color: 'text-blue-400',    filterKey: null,      noFilter: true },
-    { label: 'TOTAL', value: stats.totalEvents,  color: isDark ? 'text-white/80' : 'text-gray-700', filterKey: null },
-    { label: 'SAFE',  value: stats.safeCommands, color: 'text-emerald-400', filterKey: 'safe' },
-    { label: 'WARN',  value: stats.warnings,     color: 'text-amber-400',   filterKey: 'warning' },
-    { label: 'BLOCK', value: stats.blocked,      color: 'text-red-400',     filterKey: 'blocked' },
-  ];
-
-  return (
+  // ─── Shared modals ────────────────────────────────────────────────────────────
+  const modals = (
     <>
-      {/* ── Modals ─────────────────────────────────────────────────────── */}
       <ConnectionModal
         isOpen={showGatewayModal}
         onClose={() => setShowGatewayModal(false)}
@@ -261,40 +246,228 @@ function App() {
         }}
         currentStatus={blockingStatus}
       />
+    </>
+  );
 
-      {/* ── Glass Panel ─────────────────────────────────────────────────── */}
+  // ─── Electron sidebar layout ──────────────────────────────────────────────────
+  const isElectron = typeof window !== 'undefined' && window.electronAPI?.isElectron;
+
+  if (isElectron) {
+    const backendButtons = [
+      { key: 'all', label: 'All', dot: null },
+      ...(backends?.openclaw ? [{ key: 'openclaw', label: 'OpenClaw', dot: backends.openclaw.connected }] : []),
+      ...(backends?.nanobot  ? [{ key: 'nanobot',  label: 'Nanobot',  dot: backends.nanobot.connected  }] : []),
+    ];
+
+    return (
+      <>
+        {modals}
+        <div className="flex h-screen bg-[#0f0f1a] text-white overflow-hidden">
+
+          {/* ── Left Sidebar ── */}
+          <aside
+            className="w-64 flex-shrink-0 flex flex-col border-r border-white/5 bg-[#0d0d1a]"
+            style={{ paddingTop: '52px' }}
+          >
+            <div className="px-5 pb-4">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">🛡️</span>
+                <div>
+                  <h1 className="font-bold text-white text-sm">GuardClaw</h1>
+                  <p className="text-xs text-white/40">AI Safety Monitor</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Stats */}
+            <div className="px-4 space-y-2 mb-4">
+              {[
+                { label: 'DAYS',  value: daysSinceInstall, color: 'text-blue-400' },
+                { label: 'SAFE',  value: stats.safeCommands, color: 'text-emerald-400' },
+                { label: 'WARN',  value: stats.warnings, color: 'text-amber-400' },
+                { label: 'BLOCK', value: stats.blocked, color: 'text-red-400' },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="flex items-center justify-between px-3 py-2 rounded-lg bg-white/3">
+                  <span className="text-xs text-white/50">{label}</span>
+                  <span className={`text-lg font-bold tabular-nums ${color}`}>{value}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="h-px bg-white/5 mx-4 mb-4" />
+
+            {/* Backend selector */}
+            <div className="px-4 mb-4">
+              <p className="text-xs text-white/40 uppercase tracking-wider mb-2">Backend</p>
+              <div className="flex flex-col gap-1">
+                {backendButtons.map(({ key, label, dot }) => (
+                  <button
+                    key={key}
+                    onClick={() => setBackendFilter(key)}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all text-left ${
+                      backendFilter === key
+                        ? 'bg-blue-500/20 text-blue-300 shadow-[inset_0_0_0_1px_rgba(96,165,250,0.3)]'
+                        : 'text-white/50 hover:bg-white/5'
+                    }`}
+                  >
+                    {dot !== null && (
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                    )}
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="h-px bg-white/5 mx-4 mb-4" />
+
+            {/* LLM status */}
+            {llmStatus && (
+              <div className="px-4 mb-4">
+                <p className="text-xs text-white/40 uppercase tracking-wider mb-2">LLM Monitor</p>
+                <button
+                  onClick={() => setShowLlmModal(true)}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-white/3 hover:bg-white/6 transition-colors text-left"
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${llmStatus.connected ? 'bg-green-400' : 'bg-red-400'}`} />
+                  <div className="min-w-0">
+                    <p className="text-xs text-white/70 truncate">{llmStatus.backend || 'Unknown'}</p>
+                    <p className="text-xs text-white/35 truncate">{llmStatus.connected ? 'Connected' : 'Disconnected'}</p>
+                  </div>
+                </button>
+              </div>
+            )}
+
+            <div className="flex-1" />
+
+            {/* Connection status */}
+            <div className="px-4 py-4 border-t border-white/5">
+              <button
+                onClick={() => setShowGatewayModal(true)}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/5 transition-colors text-left"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${connected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
+                <span className="text-xs text-white/50">{connected ? 'Backend connected' : 'Disconnected'}</span>
+              </button>
+            </div>
+          </aside>
+
+          {/* ── Main Content ── */}
+          <main className="flex-1 flex flex-col overflow-hidden" style={{ paddingTop: '52px' }}>
+
+            {/* Top bar */}
+            <div className="flex items-center justify-between px-6 pb-4 border-b border-white/5">
+              <div className="flex items-center gap-3">
+                <h2 className="font-semibold text-white/80 text-sm">Events</h2>
+                <span className="text-xs text-white/30 tabular-nums">{events.length}</span>
+                {/* Event type filter tabs */}
+                <div className="flex gap-1 ml-2">
+                  {[
+                    { key: null, label: 'All' },
+                    { key: 'safe', label: 'Safe' },
+                    { key: 'warning', label: 'Warn' },
+                    { key: 'blocked', label: 'Block' },
+                  ].map(({ key, label }) => (
+                    <button
+                      key={String(key)}
+                      onClick={() => setEventFilter(eventFilter === key ? null : key)}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
+                        eventFilter === key
+                          ? 'bg-blue-500/25 text-blue-300 shadow-[inset_0_0_0_1px_rgba(96,165,250,0.4)]'
+                          : 'text-white/40 hover:bg-white/6'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {blockingStatus && (
+                  <button
+                    onClick={() => setShowBlockingModal(true)}
+                    title={blockingStatus.active ? 'Blocking Active' : 'Monitor Only'}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border border-white/10 text-white/50 hover:bg-white/5"
+                  >
+                    {blockingStatus.active ? '🚫 Blocking' : '👀 Monitor'}
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowSettingsModal(true)}
+                  className="p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-colors"
+                  title="Settings"
+                >
+                  ⚙️
+                </button>
+                <button
+                  onClick={() => setDarkMode(d => !d)}
+                  className="p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-colors"
+                  title="Toggle theme"
+                >
+                  {darkMode ? '☀️' : '🌙'}
+                </button>
+              </div>
+            </div>
+
+            {/* Event list */}
+            <div className="flex-1 overflow-y-auto">
+              <EventList events={events} />
+            </div>
+          </main>
+        </div>
+      </>
+    );
+  }
+
+  // ─── Original floating glass panel (web / browser mode) ───────────────────────
+  const isDark = darkMode;
+  const textPrimary   = isDark ? 'text-white/90'  : 'text-gray-800/90';
+  const textSecondary = isDark ? 'text-white/45'  : 'text-gray-500';
+  const textTertiary  = isDark ? 'text-white/28'  : 'text-gray-400';
+  const divider       = isDark ? 'glass-divider-dark' : 'glass-divider-light';
+
+  const backendButtons = [
+    { key: 'all', label: 'All', dot: null },
+    ...(backends?.openclaw ? [{ key: 'openclaw', label: 'OpenClaw', dot: backends.openclaw.connected }] : []),
+    ...(backends?.nanobot  ? [{ key: 'nanobot',  label: 'Nanobot',  dot: backends.nanobot.connected  }] : []),
+  ];
+
+  const statRows = [
+    { label: 'DAYS',  value: daysSinceInstall, color: 'text-blue-400',    filterKey: null,      noFilter: true },
+    { label: 'TOTAL', value: stats.totalEvents,  color: isDark ? 'text-white/80' : 'text-gray-700', filterKey: null },
+    { label: 'SAFE',  value: stats.safeCommands, color: 'text-emerald-400', filterKey: 'safe' },
+    { label: 'WARN',  value: stats.warnings,     color: 'text-amber-400',   filterKey: 'warning' },
+    { label: 'BLOCK', value: stats.blocked,      color: 'text-red-400',     filterKey: 'blocked' },
+  ];
+
+  return (
+    <>
+      {modals}
+
       <div
         className={`glass-panel fixed top-2 right-2 z-50 w-[440px] overflow-hidden ${isDark ? 'dark-glass' : 'light-glass'}`}
         style={{ maxWidth: 'calc(100vw - 16px)' }}
       >
-        {/* ── Top bar (always visible) ──────────────────────────────────── */}
+        {/* Top bar (always visible) */}
         <div
           className="flex items-center px-4 py-[11px] gap-2 cursor-pointer select-none"
           onClick={() => setIsExpanded(v => !v)}
         >
-          {/* Logo + name */}
           <span className="text-[1.25rem] leading-none">🛡️</span>
-          <span className={`text-[13px] font-semibold tracking-tight ${textPrimary}`}>
-            GuardClaw
-          </span>
+          <span className={`text-[13px] font-semibold tracking-tight ${textPrimary}`}>GuardClaw</span>
 
-          {/* Connection dot */}
           <div className={connected ? 'dot-connected' : 'dot-disconnected'} />
 
           <div className="flex-1" />
 
-          {/* Mini stat pills */}
           <div className="flex items-center gap-[6px] text-[11px] font-semibold tabular-nums mr-1">
             <span className="text-emerald-400" title="Safe">✓{stats.safeCommands}</span>
             <span className="text-amber-400"   title="Warnings">⚠{stats.warnings}</span>
             <span className="text-red-400"     title="Blocked">✕{stats.blocked}</span>
           </div>
 
-          {/* Action buttons – stop propagation so they don't toggle expand */}
-          <div
-            className="flex items-center gap-[2px]"
-            onClick={e => e.stopPropagation()}
-          >
+          <div className="flex items-center gap-[2px]" onClick={e => e.stopPropagation()}>
             {blockingStatus && (
               <button
                 className="glass-btn"
@@ -304,31 +477,16 @@ function App() {
                 {blockingStatus.active ? '🚫' : '👀'}
               </button>
             )}
-            <button
-              className="glass-btn"
-              onClick={() => setShowSettingsModal(true)}
-              title="Settings"
-            >
-              ⚙️
-            </button>
-            <button
-              className="glass-btn"
-              onClick={() => setDarkMode(d => !d)}
-              title={isDark ? 'Light mode' : 'Dark mode'}
-            >
+            <button className="glass-btn" onClick={() => setShowSettingsModal(true)} title="Settings">⚙️</button>
+            <button className="glass-btn" onClick={() => setDarkMode(d => !d)} title={isDark ? 'Light mode' : 'Dark mode'}>
               {isDark ? '☀️' : '🌙'}
             </button>
           </div>
 
-          {/* Chevron */}
-          <span
-            className={`chevron text-[11px] ml-[2px] ${textTertiary} ${isExpanded ? 'open' : ''}`}
-          >
-            ▾
-          </span>
+          <span className={`chevron text-[11px] ml-[2px] ${textTertiary} ${isExpanded ? 'open' : ''}`}>▾</span>
         </div>
 
-        {/* ── Expanded content ──────────────────────────────────────────── */}
+        {/* Expanded content */}
         <div
           className="panel-content-open"
           style={{
@@ -336,10 +494,8 @@ function App() {
             opacity: isExpanded ? 1 : 0,
           }}
         >
-          {/* Divider */}
           <div className={divider} />
 
-          {/* Stats row */}
           <div className="grid grid-cols-5 gap-0 px-2 py-2">
             {statRows.map(({ label, value, color, filterKey, noFilter }) => {
               const isActive = !noFilter && eventFilter === filterKey;
@@ -351,9 +507,7 @@ function App() {
                   onClick={isClickable ? () => setEventFilter(isActive ? null : filterKey) : undefined}
                   title={isClickable ? (isActive ? 'Clear filter' : `Filter: ${label}`) : undefined}
                 >
-                  <span className={`text-[22px] font-bold tabular-nums leading-none ${color}`}>
-                    {value}
-                  </span>
+                  <span className={`text-[22px] font-bold tabular-nums leading-none ${color}`}>{value}</span>
                   <span className={`text-[9px] font-medium tracking-[0.08em] uppercase mt-[4px] ${textSecondary}`}>
                     {label}{isActive ? ' ✓' : ''}
                   </span>
@@ -362,10 +516,8 @@ function App() {
             })}
           </div>
 
-          {/* Divider */}
           <div className={divider} />
 
-          {/* Backend selector */}
           <div className="flex items-center gap-[6px] px-4 py-[8px] flex-wrap">
             <span className={`text-[11px] font-medium mr-1 ${textSecondary}`}>Backend</span>
             {backendButtons.map(({ key, label, dot }) => (
@@ -379,9 +531,7 @@ function App() {
                 }`}
               >
                 {dot !== null && (
-                  <span
-                    className={`w-[6px] h-[6px] rounded-full flex-shrink-0 ${dot ? 'bg-emerald-400' : 'bg-red-400'}`}
-                  />
+                  <span className={`w-[6px] h-[6px] rounded-full flex-shrink-0 ${dot ? 'bg-emerald-400' : 'bg-red-400'}`} />
                 )}
                 {label}
               </button>
@@ -391,21 +541,15 @@ function App() {
             </span>
           </div>
 
-          {/* Divider */}
           <div className={divider} />
 
-          {/* Events header */}
           <div className="flex items-center justify-between px-4 py-[7px]">
-            <span className={`text-[11px] font-semibold tracking-wide uppercase ${textSecondary}`}>
-              Real-time Events
-            </span>
+            <span className={`text-[11px] font-semibold tracking-wide uppercase ${textSecondary}`}>Real-time Events</span>
             {eventFilter && (
               <button
                 onClick={() => setEventFilter(null)}
                 className={`text-[10px] px-[8px] py-[2px] rounded-full transition-colors ${
-                  isDark
-                    ? 'bg-white/10 text-white/55 hover:bg-white/18'
-                    : 'bg-black/6 text-gray-500 hover:bg-black/10'
+                  isDark ? 'bg-white/10 text-white/55 hover:bg-white/18' : 'bg-black/6 text-gray-500 hover:bg-black/10'
                 }`}
               >
                 {eventFilter} ×
@@ -413,11 +557,7 @@ function App() {
             )}
           </div>
 
-          {/* Events list */}
-          <div
-            className="glass-scroll overflow-y-auto"
-            style={{ height: 'min(52vh, 460px)' }}
-          >
+          <div className="glass-scroll overflow-y-auto" style={{ height: 'min(52vh, 460px)' }}>
             <EventList events={events} />
           </div>
         </div>

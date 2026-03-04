@@ -21,7 +21,8 @@ const app = express();
 const PORT = process.env.PORT || 3002;
 
 // Blocking config (whitelist/blacklist)
-const BLOCKING_CONFIG_PATH = path.join(process.cwd(), 'blocking-config.json');
+const configDir = process.env.ELECTRON_USER_DATA || process.cwd();
+const BLOCKING_CONFIG_PATH = path.join(configDir, 'blocking-config.json');
 let blockingConfig = { whitelist: [], blacklist: [] };
 
 function loadBlockingConfig() {
@@ -55,9 +56,11 @@ app.use(cors());
 app.use(express.json());
 // Serve static assets with long-term caching; index.html gets no-cache so
 // the browser always fetches the latest entry point (important after deploys).
-app.use(express.static('client/dist', {
+const clientDistPath = process.env.ELECTRON_DIST_PATH ||
+  path.join(process.cwd(), 'client', 'dist');
+app.use(express.static(clientDistPath, {
   setHeaders(res, filePath) {
-    if (filePath.endsWith('index.html')) {
+    if (filePath.endsWith('index.html') || filePath.endsWith('tray.html')) {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     }
   },

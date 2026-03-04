@@ -2,7 +2,7 @@
   "name": "guardclaw",
   "version": "0.1.0",
   "description": "AI Agent Safety Monitor with LLM-based Command Safeguard",
-  "main": "server/index.js",
+  "main": "electron/main.cjs",
   "type": "module",
   "bin": {
     "guardclaw": "./bin/guardclaw.js"
@@ -13,7 +13,10 @@
     "client:dev": "cd client && vite",
     "build": "cd client && vite build",
     "start": "node server/index.js",
-    "test": "echo \"Tests coming soon\" && exit 0"
+    "test": "echo \"Tests coming soon\" && exit 0",
+    "electron:dev": "concurrently \"npm run server:dev\" \"cd client && vite\" \"wait-on http://localhost:5173 && NODE_ENV=development electron .\"",
+    "electron:build": "cd client && vite build && electron-builder --mac",
+    "electron:pack": "cd client && vite build && electron-builder --mac --publish=never"
   },
   "keywords": [
     "openclaw",
@@ -38,7 +41,10 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.3",
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "electron": "^29.0.0",
+    "electron-builder": "^24.13.3",
+    "wait-on": "^7.2.0"
   },
   "engines": {
     "node": ">=18"
